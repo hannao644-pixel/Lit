@@ -17,38 +17,12 @@ st.set_page_config(
 # ==========================================
 # 2. PASSWORD PROTECTION
 # ==========================================
-# In production on Streamlit Cloud, you can set this in Settings -> Secrets.
-# For local testing, change "research2026" to your preferred password.
-# With this:
-try:
-    APP_PASSWORD = st.secrets.get("APP_PASSWORD", "research2026")
-except Exception:
-    APP_PASSWORD = "research2026"
-
-def check_password():
-    """Returns True if the user has entered the correct password."""
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-
-    if st.session_state.authenticated:
-        return True
-
-    st.title("🔒 Literature Review Database")
-    st.write("Please enter the password to access your research library.")
-
-    pwd_input = st.text_input("Password", type="password")
-    if st.button("Log In"):
-        if pwd_input == APP_PASSWORD:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect password. Please try again.")
-    return False
-
-
-if not check_password():
-    st.stop()  # Halt execution until authenticated
-
+# This securely reads the password from Streamlit Cloud's Secrets vault
+if "APP_PASSWORD" in st.secrets:
+  APP_PASSWORD = st.secrets["APP_PASSWORD"]
+else:
+  # Fallback only used if you run locally and forgot to set a secret
+  APP_PASSWORD = "change_me_locally"
 
 # ==========================================
 # 3. DATA LOADING (GOOGLE SHEETS & LOCAL)
