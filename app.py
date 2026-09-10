@@ -102,17 +102,32 @@ def save_search(name: str, criteria: dict):
 # ==========================================
 st.sidebar.title("⚙️ Settings & Sources")
 
-sheet_link = st.sidebar.text_input("Google Sheets Share Link", value="")
+# 1. Safely retrieve the sheet URL from Streamlit Secrets
+try:
+    secret_url = st.secrets.get("SHEET_URL", "")
+except Exception:
+    secret_url = ""
 
-if st.sidebar.button("🔄 Force Refresh Sheet"):
+# 2. Check if a secret URL exists
+if secret_url:
+    # If the URL is in secrets, load it automatically without showing the raw link
+    sheet_link = secret_url
+    st.sidebar.success(" Connected to private research sheet")
+else:
+    # Fallback: if no secret is set, show a normal text box where you can paste it
+    sheet_link = st.sidebar.text_input("Google Sheets Share Link", value="")
+
+# 3. Refresh button to manually clear cache and pull newest edits
+if st.sidebar.button(" Force Refresh Sheet"):
     st.cache_data.clear()
     st.rerun()
 
-# Attempt to load data
+# 4. Stop gracefully if no link is provided
 if not sheet_link.strip():
-    st.info("👈 Please paste your Google Sheets share link in the sidebar to load your data.")
+    st.info(" Please configure `SHEET_URL` in your Streamlit Secrets or paste a link in the sidebar.")
     st.stop()
 
+# 5. Load the data
 try:
     df = load_data(sheet_link)
 except Exception as e:
