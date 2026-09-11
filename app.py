@@ -107,7 +107,6 @@ def get_unique_items(series: pd.Series) -> list:
 # ==========================================
 SAVED_SEARCHES_FILE = "saved_searches.json"
 
-
 def load_saved_searches() -> dict:
     if os.path.exists(SAVED_SEARCHES_FILE):
         try:
@@ -117,13 +116,19 @@ def load_saved_searches() -> dict:
             return {}
     return {}
 
-
 def save_search(name: str, criteria: dict):
     searches = load_saved_searches()
     searches[name] = criteria
     with open(SAVED_SEARCHES_FILE, "w") as f:
         json.dump(searches, f, indent=2)
 
+def delete_search(name: str):
+    """Deletes a preset search from the JSON file."""
+    searches = load_saved_searches()
+    if name in searches:
+        del searches[name]
+        with open(SAVED_SEARCHES_FILE, "w") as f:
+            json.dump(searches, f, indent=2)
 
 # ==========================================
 # 6. SIDEBAR: DATA SOURCE & REFRESH
