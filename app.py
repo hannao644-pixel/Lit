@@ -25,22 +25,25 @@ except Exception:
 
 def check_password():
   """Returns True if the user has entered the correct password."""
-  # If the user has already successfully authenticated, keep them in
+  # If the user has already logged in, keep them in
   if st.session_state.get("authenticated", False):
     return True
 
-  # Otherwise, show the login form
   st.title("🔒 Literature Review Database")
   st.write("Please enter the password to access your research library.")
 
-  pwd_input = st.text_input("Password", type="password")
+  # Wrapping the input inside st.form enables pressing "Enter" on your keyboard!
+  with st.form("login_form"):
+    pwd_input = st.text_input("Password", type="password")
+    submit_button = st.form_submit_button("Log In")
 
-  if st.button("Log In"):
-    if pwd_input == APP_PASSWORD:
-      st.session_state.authenticated = True
-      st.rerun()
-    else:
-      st.error("Incorrect password. Please try again.")
+    # This triggers EITHER when you click the button OR when you press Enter on your keyboard
+    if submit_button:
+      if pwd_input == APP_PASSWORD:
+        st.session_state.authenticated = True
+        st.rerun()
+      else:
+        st.error("Incorrect password. Please try again.")
 
   return False
 
