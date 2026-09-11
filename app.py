@@ -363,8 +363,12 @@ if selected_methods and method_col in df.columns:
     filtered_df = filtered_df[filtered_df[method_col].str.contains(me_pattern, case=False, na=False)]
 
 # 4. Free text notes search
-if notes_query and notes_col in df.columns:
-    filtered_df = filtered_df[filtered_df[notes_col].str.contains(notes_query, case=False, na=False)]
+if findings_query and notes_col in df.columns:
+  filtered_df = filtered_df[
+      filtered_df[notes_col]
+      .astype(str)
+      .str.contains(findings_query, case=False, na=False)
+  ]
 
 # ==========================================
 # 10. DISPLAY RESULTS
