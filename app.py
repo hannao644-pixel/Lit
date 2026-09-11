@@ -174,12 +174,17 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("⭐ Saved Searches")
 
 saved_searches = load_saved_searches()
-selected_saved = st.sidebar.selectbox(
-    "Load a preset search:",
-    options=["-- None --"] + list(saved_searches.keys())
-)
+search_options = ["-- None --"] + list(saved_searches.keys())
 
-# Preset state handler
+selected_saved = st.sidebar.selectbox("Load a preset search:", options=search_options)
+
+# If a saved search is selected, show a button to delete it directly in the app
+if selected_saved != "-- None --":
+    if st.sidebar.button(f"🗑️ Delete '{selected_saved}'", type="secondary"):
+        delete_search(selected_saved)
+        st.sidebar.success(f"Deleted '{selected_saved}'!")
+        st.rerun()
+
 loaded_criteria = saved_searches.get(selected_saved, {}) if selected_saved != "-- None --" else {}
 
 # ==========================================
