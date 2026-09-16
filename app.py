@@ -79,17 +79,24 @@ def load_data(source_url: str) -> pd.DataFrame:
 # 4. HELPER FUNCTIONS & CROSSREF RADAR
 # ==========================================
 def get_unique_items(series: pd.Series) -> list:
-  """Extracts unique values from comma/semicolon/slash-delimited entries."""
-  all_items = set()
-  for entry in series.dropna():
-    # Split on comma, semicolon, or slash
-    items = re.split(r"[,;/]", str(entry))
-    for item in items:
-      cleaned = item.strip()
-      # Avoid adding blank values or raw N/A to the dropdown
-      if cleaned and cleaned.upper() not in ["N/A", "NA"]:
-        all_items.add(cleaned)
-  return sorted(list(all_items))
+    """
+    Extracts unique terms separated by commas or semicolons, 
+    stripping out parentheses and any content inside them.
+    """
+    all_items = set()
+    for entry in series.dropna():
+        # 1. Remove anything in parentheses: e.g. "Adolescents (grades 9-12)" -> "Adolescents "
+        cleaned_entry = re.sub(r"\(.*?\)", "", str(entry))
+        
+        # 2. Split strictly on commas or semicolons
+        items = re.split(r"[,;]", cleaned_entry)
+        for item in items:
+            cleaned = item.strip()
+            # Omit blanks and N/A values
+            if cleaned and cleaned.upper() not in ["N/A", "NA"]:
+                all_items.add(cleaned)
+                
+    return sorted(list(all_items), key=lambda s: s.lower())
 
 @st.cache_data(ttl=3600)
 def check_recent_publications(keywords: list[str], max_results: int = 5):
@@ -385,44 +392,18 @@ else:
     active_radar_terms = []
 
 
-# ==========================================
-# 9. FILTERING ENGINE (PANDAS)
-# ==========================================
-filtered_df = df.copy()
-
-
 def row_matches_items(cell_value, selected_items, mode="Any (OR)"):
-  if not selected_items:
-    return True
+    if not selected_items:
+        return True
+    
+    # Strip parentheses from cell content before comparing
+    cleaned_cell = re.sub(r"\(.*?\)", "", str(cell_value)).lower()
+    selected_lower = [sel.strip().lower() for sel in selected_items if sel.strip()]
 
-  cell_str = str(cell_value).lower()
-  selected_lower = [sel.strip().lower() for sel in selected_items if sel.strip()]
-
-  if mode == "All (AND)":
-    # Every selected keyword must be present in the cell
-    return all(sel in cell_str for sel in selected_lower)
-  else:
-    # At least one selected keyword must be present in the cell
-    return any(sel in cell_str for sel in selected_lower)
-
-if selected_keywords and kw_col in df.columns:
-    mask = filtered_df[kw_col].apply(lambda x: row_matches_items(x, selected_keywords, kw_mode))
-    filtered_df = filtered_df[mask]
-
-if selected_theories and theory_col in df.columns:
-    mask = filtered_df[theory_col].apply(lambda x: row_matches_items(x, selected_theories, "Any (OR)"))
-    filtered_df = filtered_df[mask]
-
-if selected_methods and method_col in df.columns:
-    mask = filtered_df[method_col].apply(lambda x: row_matches_items(x, selected_methods, "Any (OR)"))
-    filtered_df = filtered_df[mask]
-
-if selected_groups and sample_col in df.columns:
-    mask = filtered_df[sample_col].apply(lambda x: row_matches_items(x, selected_groups, "Any (OR)"))
-    filtered_df = filtered_df[mask]
-
-if findings_query and notes_col in df.columns:
-    filtered_df = filtered_df[filtered_df[notes_col].astype(str).str.contains(findings_query, case=False, na=False)]
+    if mode == "All (AND)":
+        return all(sel in cleaned_cell for sel in selected_lower)
+    else:
+        return any(sel in cleaned_cell for sel in selected_lower)
 
 
 # ==========================================
