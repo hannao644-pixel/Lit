@@ -75,28 +75,26 @@ def load_data(source_url: str) -> pd.DataFrame:
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
-# ==========================================
-# 4. HELPER FUNCTIONS & CROSSREF RADAR
-# ==========================================
 def get_unique_items(series: pd.Series) -> list:
     """
-    Extracts unique terms separated by commas or semicolons, 
-    stripping out parentheses and any content inside them.
+    Extracts unique terms separated by commas or semicolons,
+    stripping out parentheses and consolidating case differences.
     """
-    all_items = set()
+    all_items = {}
     for entry in series.dropna():
-        # 1. Remove anything in parentheses: e.g. "Adolescents (grades 9-12)" -> "Adolescents "
         cleaned_entry = re.sub(r"\(.*?\)", "", str(entry))
-        
-        # 2. Split strictly on commas or semicolons
         items = re.split(r"[,;]", cleaned_entry)
         for item in items:
             cleaned = item.strip()
-            # Omit blanks and N/A values
             if cleaned and cleaned.upper() not in ["N/A", "NA"]:
-                all_items.add(cleaned)
-                
-    return sorted(list(all_items), key=lambda s: s.lower())
+                lower_key = cleaned.lower()
+                # Store the most capitalized or clean version encountered
+                if lower_key not in all_items:
+                    all_items[lower_key] = cleaned
+                elif cleaned.isupper() or cleaned.istitle():
+                    all_items[lower_key] = cleaned
+
+    return sorted(list(all_items.values()), key=lambda s: s.lower())
 
 @st.cache_data(ttl=3600)
 def check_recent_publications(keywords: list[str], max_results: int = 5):
@@ -412,12 +410,13 @@ filtered_df = df.copy()
 
 def row_matches_items(cell_value, selected_items, mode="Any (OR)"):
     """
-    Checks if a row matches the selected items, ignoring case and 
-    stripping parentheses and their contents from the cell text.
+    Checks if a row matches the selected items, fully case-insensitive,
+    stripping parentheses and extra whitespace.
     """
     if not selected_items:
         return True
 
+    # Strip parentheses and convert spreadsheet cell text to lowercase
     cleaned_cell = re.sub(r"\(.*?\)", "", str(cell_value)).lower()
     selected_lower = [sel.strip().lower() for sel in selected_items if sel.strip()]
 
@@ -426,22 +425,27 @@ def row_matches_items(cell_value, selected_items, mode="Any (OR)"):
     else:
         return any(sel in cleaned_cell for sel in selected_lower)
 
+# 1. Main Topics (Keywords) Filter
 if selected_keywords and kw_col in df.columns:
     mask = filtered_df[kw_col].apply(lambda x: row_matches_items(x, selected_keywords, kw_mode))
     filtered_df = filtered_df[mask]
 
+# 2. Theory Used Filter
 if selected_theories and theory_col in df.columns:
     mask = filtered_df[theory_col].apply(lambda x: row_matches_items(x, selected_theories, "Any (OR)"))
     filtered_df = filtered_df[mask]
 
+# 3. Statistical Analysis Filter
 if selected_methods and method_col in df.columns:
     mask = filtered_df[method_col].apply(lambda x: row_matches_items(x, selected_methods, "Any (OR)"))
     filtered_df = filtered_df[mask]
 
+# 4. Group Studied Filter
 if selected_groups and sample_col in df.columns:
     mask = filtered_df[sample_col].apply(lambda x: row_matches_items(x, selected_groups, "Any (OR)"))
     filtered_df = filtered_df[mask]
 
+# 5. Free Text Search in Findings & Notes
 if findings_query and notes_col in df.columns:
     filtered_df = filtered_df[
         filtered_df[notes_col]
