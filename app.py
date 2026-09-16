@@ -79,15 +79,17 @@ def load_data(source_url: str) -> pd.DataFrame:
 # 4. HELPER FUNCTIONS & CROSSREF RADAR
 # ==========================================
 def get_unique_items(series: pd.Series) -> list:
-    """Extracts unique values from comma/semicolon-delimited entries."""
-    all_items = set()
-    for entry in series.dropna():
-        items = re.split(r"[,;]", str(entry))
-        for item in items:
-            cleaned = item.strip()
-            if cleaned:
-                all_items.add(cleaned)
-    return sorted(list(all_items))
+  """Extracts unique values from comma/semicolon/slash-delimited entries."""
+  all_items = set()
+  for entry in series.dropna():
+    # Split on comma, semicolon, or slash
+    items = re.split(r"[,;/]", str(entry))
+    for item in items:
+      cleaned = item.strip()
+      # Avoid adding blank values or raw N/A to the dropdown
+      if cleaned and cleaned.upper() not in ["N/A", "NA"]:
+        all_items.add(cleaned)
+  return sorted(list(all_items))
 
 @st.cache_data(ttl=3600)
 def check_recent_publications(keywords: list[str], max_results: int = 5):
@@ -340,9 +342,7 @@ selected_methods = st.sidebar.multiselect(
 all_groups = get_unique_items(df[sample_col]) if sample_col in df.columns else []
 default_gp = loaded_criteria.get("groups", [])
 selected_groups = st.sidebar.multiselect(
-    "Group Studied",
-    options=all_groups,
-    default=default_gp
+    "Group Studied", options=all_groups, default=default_gp
 )
 
 # 5. Free Text Search in Findings
@@ -390,16 +390,20 @@ else:
 # ==========================================
 filtered_df = df.copy()
 
-def row_matches_items(cell_value, selected_items, mode="Any (OR)"):
-    if not selected_items:
-        return True
-    cell_items = [i.strip().lower() for i in re.split(r"[,;]", str(cell_value)) if i.strip()]
-    selected_lower = [i.lower() for i in selected_items]
 
-    if mode == "All (AND)":
-        return all(sel in cell_items for sel in selected_lower)
-    else:
-        return any(sel in cell_items for sel in selected_lower)
+def row_matches_items(cell_value, selected_items, mode="Any (OR)"):
+  if not selected_items:
+    return True
+
+  cell_str = str(cell_value).lower()
+  selected_lower = [sel.strip().lower() for sel in selected_items if sel.strip()]
+
+  if mode == "All (AND)":
+    # Every selected keyword must be present in the cell
+    return all(sel in cell_str for sel in selected_lower)
+  else:
+    # At least one selected keyword must be present in the cell
+    return any(sel in cell_str for sel in selected_lower)
 
 if selected_keywords and kw_col in df.columns:
     mask = filtered_df[kw_col].apply(lambda x: row_matches_items(x, selected_keywords, kw_mode))
