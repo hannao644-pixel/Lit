@@ -91,19 +91,29 @@ def get_unique_items(series: pd.Series) -> list:
 
 @st.cache_data(ttl=3600)
 def check_recent_publications(keywords: list[str], max_results: int = 5):
-    """Queries Crossref across academic publications from the past 365 days."""
+    """
+    Queries Crossref for journal articles from the past 365 days where
+    the keywords appear in the title/abstract, restricted to developmental,
+    psychological, health, and family-oriented journals.
+    """
     if not keywords:
         return []
 
     one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-    query_str = " ".join(keywords)
+    
+    # Enclose multiple terms to encourage matching the concepts in titles
+    title_query = " ".join([f'"{k}"' if " " in k else k for k in keywords])
+
+    # Relevant journal/field scoping terms
+    relevant_disciplines = "development psychology health adolescent youth child family pediatric clinical psychiatry"
 
     url = "https://api.crossref.org/works"
     params = {
-        "query": query_str,
+        "query.title": title_query,                # Forces keywords to be in the paper's title
+        "query.container-title": relevant_disciplines, # Scopes to health/psych/family journals
         "filter": f"from-pub-date:{one_year_ago},type:journal-article",
         "rows": max_results,
-        "sort": "published",
+        "sort": "score",                           # Sort by keyword relevance first
         "order": "desc"
     }
 
@@ -146,7 +156,6 @@ def check_recent_publications(keywords: list[str], max_results: int = 5):
     except Exception:
         return []
     return []
-
 
 # ==========================================
 # 5. SAVED SEARCHES MANAGEMENT
