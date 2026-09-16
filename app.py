@@ -67,13 +67,13 @@ def format_google_sheets_url(url: str) -> str:
 
 @st.cache_data(ttl=60)
 def load_data(source_url: str) -> pd.DataFrame:
-    """Reads live data directly from Google Sheets."""
+    """Reads live data directly from Google Sheets while preserving literal N/A values."""
     export_url = format_google_sheets_url(source_url)
-    df = pd.read_csv(export_url)
+    
+    # keep_default_na=False ensures "N/A", "NA", and "None" are read as actual text
+    df = pd.read_csv(export_url, keep_default_na=False)
     df.columns = [str(c).strip() for c in df.columns]
-    df = df.fillna("")
     return df
-
 
 # ==========================================
 # 4. HELPER FUNCTIONS & CROSSREF RADAR
@@ -516,20 +516,31 @@ else:
             col1, col2 = st.columns([1, 1])
 
             with col1:
-                if theory_col in row and str(row[theory_col]).strip():
-                    st.markdown(f"**Theory Used:** {row[theory_col]}")
-                if method_col in row and str(row[method_col]).strip():
-                    st.markdown(f"**Statistical Analysis:** {row[method_col]}")
-                if sample_col in row and str(row[sample_col]).strip():
-                    st.markdown(f"**Group Studied:** {row[sample_col]}")
+                theory_val = str(row.get(theory_col, "")).strip()
+                if theory_val:
+                    st.markdown(f"**Theory Used:** {theory_val}")
+
+                method_val = str(row.get(method_col, "")).strip()
+                if method_val:
+                    st.markdown(f"**Statistical Analysis:** {method_val}")
+
+                sample_val = str(row.get(sample_col, "")).strip()
+                if sample_val:
+                    st.markdown(f"**Group Studied:** {sample_val}")
 
             with col2:
-                if kw_col in row and str(row[kw_col]).strip():
-                    st.markdown(f"**Main Topics:** `{row[kw_col]}`")
-                if doi_col in row and str(row[doi_col]).strip():
-                    doi_val = str(row[doi_col]).strip()
-                    doi_link = doi_val if doi_val.startswith("http") else f"https://doi.org/{doi_val}"
-                    st.markdown(f"🔗 **DOI:** [{doi_val}]({doi_link})")
+                kw_val = str(row.get(kw_col, "")).strip()
+                if kw_val:
+                    st.markdown(f"**Main Topics:** `{kw_val}`")
 
-            if notes_col in row and str(row[notes_col]).strip():
-                st.markdown(f"**Findings:**\n> {row[notes_col]}")
+                doi_val = str(row.get(doi_col, "")).strip()
+                if doi_val:
+                    if doi_val.upper() in ["N/A", "NA"]:
+                        st.markdown(f"🔗 **DOI:** N/A")
+                    else:
+                        doi_link = doi_val if doi_val.startswith("http") else f"https://doi.org/{doi_val}"
+                        st.markdown(f"🔗 **DOI:** [{doi_val}]({doi_link})")
+
+            notes_val = str(row.get(notes_col, "")).strip()
+            if notes_val:
+                st.markdown(f"**Findings:**\n> {notes_val}")
