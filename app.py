@@ -100,7 +100,10 @@ def check_recent_publications(keywords: list[str], max_results: int = 5):
 
     one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
     title_query = " ".join([f'"{k}"' if " " in k else k for k in keywords])
-    relevant_disciplines = "development psychology health adolescent youth child family pediatric clinical psychiatry"
+    relevant_disciplines = (
+    "development psychology health adolescent youth child family pediatric "
+    "clinical psychiatry social emotional 'social-emotional' wellbeing"
+)
 
     url = "https://api.crossref.org/works"
     params = {
@@ -155,7 +158,7 @@ def check_recent_publications(keywords: list[str], max_results: int = 5):
 # 5. SAVED SEARCHES & BOOKMARKS STORAGE
 # ==========================================
 SAVED_SEARCHES_FILE = "saved_searches.json"
-BOOKMARKS_FILE = "bookmarks.json"
+ALERT_BOOKMARKS_FILE = "alert_bookmarks.json"
 
 def load_saved_searches() -> dict:
     if os.path.exists(SAVED_SEARCHES_FILE):
@@ -179,26 +182,34 @@ def delete_search(name: str):
         with open(SAVED_SEARCHES_FILE, "w") as f:
             json.dump(searches, f, indent=2)
 
-def load_bookmarks() -> list:
-    if os.path.exists(BOOKMARKS_FILE):
+def load_alert_bookmarks() -> dict:
+    """Loads whole alert bundles saved by keyword title."""
+    if os.path.exists(ALERT_BOOKMARKS_FILE):
         try:
-            with open(BOOKMARKS_FILE, "r") as f:
+            with open(ALERT_BOOKMARKS_FILE, "r") as f:
                 return json.load(f)
         except Exception:
-            return []
-    return []
+            return {}
+    return {}
 
-def save_bookmark(paper: dict):
-    bms = load_bookmarks()
-    if not any(b.get("doi") == paper.get("doi") for b in bms):
-        bms.append(paper)
-        with open(BOOKMARKS_FILE, "w") as f:
-            json.dump(bms, f, indent=2)
-
-def remove_bookmark(doi: str):
-    bms = [b for b in load_bookmarks() if b.get("doi") != doi]
-    with open(BOOKMARKS_FILE, "w") as f:
+def save_alert_bookmark(title: str, hits: list, terms: list):
+    """Saves an entire alert notification bundle."""
+    bms = load_alert_bookmarks()
+    bms[title] = {
+        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "terms": terms,
+        "hits": hits
+    }
+    with open(ALERT_BOOKMARKS_FILE, "w") as f:
         json.dump(bms, f, indent=2)
+
+def delete_alert_bookmark(title: str):
+    """Deletes an alert bundle."""
+    bms = load_alert_bookmarks()
+    if title in bms:
+        del bms[title]
+        with open(ALERT_BOOKMARKS_FILE, "w") as f:
+            json.dump(bms, f, indent=2)
 
 
 # ==========================================
@@ -254,18 +265,26 @@ if selected_saved != "-- None --":
 
 loaded_criteria = saved_searches.get(selected_saved, {}) if selected_saved != "-- None --" else {}
 
-# Saved Bookmarks Tray in Sidebar
-saved_bms = load_bookmarks()
-with st.sidebar.expander(f"🔖 Bookmarked Papers ({len(saved_bms)})"):
-    if not saved_bms:
-        st.caption("No papers bookmarked yet.")
+# Saved Alert Notifications Tray
+st.sidebar.markdown("---")
+saved_alert_bms = load_alert_bookmarks()
+with st.sidebar.expander(f"🔖 Bookmarked Alerts ({len(saved_alert_bms)})"):
+    if not saved_alert_bms:
+        st.caption("No alert notifications bookmarked yet.")
     else:
-        for bm in saved_bms:
-            st.markdown(f"**[{bm['title']}]({bm['link']})**")
-            st.caption(f"{bm['author_year']} | *{bm['journal']}*")
-            if st.button("Remove", key=f"del_bm_{bm['doi']}", type="secondary"):
-                remove_bookmark(bm['doi'])
-                st.rerun()
+        for b_title, b_data in list(saved_alert_bms.items()):
+            st.markdown(f"**{b_title}**")
+            st.caption(f"📅 Saved: {b_data.get('saved_at', '')} | Papers: {len(b_data.get('hits', []))}")
+            
+            col_view, col_del = st.columns([2, 1])
+            with col_view:
+                if st.button("View Alert", key=f"view_alert_{b_title}"):
+                    st.session_state["active_view_bundle"] = (b_title, b_data["hits"], b_data["terms"])
+                    st.rerun()
+            with col_del:
+                if st.button("Delete", key=f"del_alert_{b_title}", type="secondary"):
+                    delete_alert_bookmark(b_title)
+                    st.rerun()
             st.divider()
 
 
@@ -410,57 +429,69 @@ st.title("📚 Literature Review Explorer")
 # --- POPUP MODAL FUNCTION ---
 @st.dialog("🔔 New Research Radar Alert", width="large")
 def show_radar_dialog(hits, terms):
-    st.markdown(f"**New papers published in the past year matching:** `{', '.join(terms)}`")
-    st.caption("Review new findings below. You can bookmark papers to save them in your sidebar tray, or dismiss this window.")
+    alert_title = f"Alert: {', '.join(terms)} ({len(hits)} papers)"
+    st.subheader(alert_title)
+    st.caption("Review new findings below. You can bookmark this entire notification for later or dismiss it to view your library.")
+
+    # Action Bar: Bookmark Whole Notification or Dismiss
+    saved_alert_bms = load_alert_bookmarks()
+    is_already_bookmarked = alert_title in saved_alert_bms
+
+    btn_col1, btn_col2 = st.columns([1, 1])
+    with btn_col1:
+        if is_already_bookmarked:
+            st.success("✓ Entire Alert Bookmarked")
+        else:
+            if st.button("🔖 Bookmark Alert for Later", use_container_width=True):
+                save_alert_bookmark(alert_title, hits, terms)
+                st.success("Saved to your bookmarks tray!")
+                st.rerun()
+
+    with btn_col2:
+        if st.button("Dismiss & Open Dashboard", type="primary", use_container_width=True):
+            terms_key = "_".join(sorted(terms))
+            st.session_state[f"dismissed_{terms_key}"] = True
+            if "active_view_bundle" in st.session_state:
+                del st.session_state["active_view_bundle"]
+            st.rerun()
+
     st.divider()
 
-    saved_bms = load_bookmarks()
-    bookmarked_dois = {b.get("doi") for b in saved_bms}
-
-    for i, pub in enumerate(hits):
+    # List the papers in this notification
+    for pub in hits:
         st.markdown(f"#### [{pub['title']}]({pub['link']})")
         st.markdown(f"📖 *{pub['journal']}*  \n👤 {pub['author_year']} | 📅 `{pub['date']}` | 🔗 [{pub['doi']}]({pub['link']})")
 
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            if pub['doi'] in bookmarked_dois:
-                st.success("✓ Bookmarked")
-            else:
-                if st.button("🔖 Bookmark for Later", key=f"bm_{i}_{pub['doi']}"):
-                    save_bookmark(pub)
-                    st.rerun()
-
         topics_str = ", ".join(terms)
         row_paste_text = f"{pub['author_year']}\t{topics_str}\t\t\t\t{pub['title']} ({pub['journal']})\t{pub['doi']}"
-        with col2:
-            with st.popover("📋 Copy Row for Sheet"):
-                st.caption("Copy and paste directly across your sheet columns:")
-                st.code(row_paste_text, language="text")
+        with st.popover("📋 Copy Row for Sheet"):
+            st.caption("Copy and paste directly into Google Sheets:")
+            st.code(row_paste_text, language="text")
 
         st.divider()
 
-    if st.button("Dismiss & Open Dashboard", type="primary", use_container_width=True):
-        terms_key = "_".join(sorted(terms))
-        st.session_state[f"dismissed_{terms_key}"] = True
-        st.rerun()
-
 
 # --- RADAR TRIGGER LOGIC ---
-if enable_radar and active_radar_terms:
+# Check if user clicked to review a bookmarked alert from the sidebar
+if "active_view_bundle" in st.session_state:
+    _, b_hits, b_terms = st.session_state["active_view_bundle"]
+    show_radar_dialog(b_hits, b_terms)
+
+elif enable_radar and active_radar_terms:
     terms_key = "_".join(sorted(active_radar_terms))
     recent_hits = check_recent_publications(active_radar_terms, max_results=5)
 
     if recent_hits:
-        # Re-open button always available in sidebar
+        # Re-open button in sidebar
         if st.sidebar.button(f"🔔 View Radar Alerts ({len(recent_hits)})"):
             st.session_state[f"dismissed_{terms_key}"] = False
 
-        # Automatically pop up if this specific term query hasn't been dismissed yet
+        # Automatically open if not dismissed for these terms
         if not st.session_state.get(f"dismissed_{terms_key}", False):
             show_radar_dialog(recent_hits, active_radar_terms)
 
 
-# --- SPREADSHEET DATABASE RESULTS (ALWAYS VISIBLE) ---
+# --- SPREADSHEET DATABASE RESULTS (ALWAYS VISIBLE UNDERNEATH) ---
 st.write(f"Showing **{len(filtered_df)}** of **{len(df)}** studies")
 
 csv_data = filtered_df.to_csv(index=False).encode('utf-8')
