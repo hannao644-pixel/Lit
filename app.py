@@ -184,6 +184,29 @@ def delete_search(name: str):
         with open(SAVED_SEARCHES_FILE, "w") as f:
             json.dump(searches, f, indent=2)
 
+BOOKMARKS_FILE = "bookmarks.json"
+
+def load_bookmarks() -> list:
+    if os.path.exists(BOOKMARKS_FILE):
+        try:
+            with open(BOOKMARKS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_bookmark(paper: dict):
+    bms = load_bookmarks()
+    if not any(b.get("doi") == paper.get("doi") for b in bms):
+        bms.append(paper)
+        with open(BOOKMARKS_FILE, "w") as f:
+            json.dump(bms, f, indent=2)
+
+def remove_bookmark(doi: str):
+    bms = [b for b in load_bookmarks() if b.get("doi") != doi]
+    with open(BOOKMARKS_FILE, "w") as f:
+        json.dump(bms, f, indent=2)
+
 
 # ==========================================
 # 6. SIDEBAR: DATA SOURCE & REFRESH
@@ -337,6 +360,19 @@ if enable_radar:
 else:
     active_radar_terms = []
 
+# --- Saved Bookmarks Tray ---
+saved_bms = load_bookmarks()
+with st.sidebar.expander(f"🔖 Bookmarked Papers ({len(saved_bms)})"):
+    if not saved_bms:
+        st.caption("No papers bookmarked yet.")
+    else:
+        for bm in saved_bms:
+            st.markdown(f"**[{bm['title']}]({bm['link']})**")
+            st.caption(f"{bm['author_year']} | *{bm['journal']}*")
+            if st.button("Remove", key=f"del_bm_{bm['doi']}", type="secondary"):
+                remove_bookmark(bm['doi'])
+                st.rerun()
+            st.divider()
 
 # ==========================================
 # 9. FILTERING ENGINE (PANDAS)
@@ -374,75 +410,62 @@ if findings_query and notes_col in df.columns:
     filtered_df = filtered_df[filtered_df[notes_col].astype(str).str.contains(findings_query, case=False, na=False)]
 
 
+
+
 # ==========================================
-# 10. DISPLAY RADAR ALERTS & RESULTS
+# 10. DISPLAY RADAR MODAL & RESULTS
 # ==========================================
 st.title("📚 Literature Review Explorer")
 
-# --- 1. Top Radar Alerts Banner ---
+# --- POPUP MODAL FOR NEW ARTICLES ---
+@st.dialog("🔔 New Research Radar Alert", width="large")
+def show_radar_dialog(hits, terms):
+    st.markdown(f"**New papers published in the past year matching:** `{', '.join(terms)}`")
+    st.caption("Review new findings below. You can bookmark papers to save them in your sidebar tray, or dismiss this window.")
+    st.divider()
+
+    saved_bms = load_bookmarks()
+    bookmarked_dois = {b.get("doi") for b in saved_bms}
+
+    for i, pub in enumerate(hits):
+        st.markdown(f"### [{pub['title']}]({pub['link']})")
+        st.markdown(f"📖 *{pub['journal']}*  \n👤 {pub['author_year']} | 📅 `{pub['date']}` | 🔗 [{pub['doi']}]({pub['link']})")
+
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            if pub['doi'] in bookmarked_dois:
+                st.success("✓ Bookmarked")
+            else:
+                if st.button("🔖 Bookmark for Later", key=f"bm_{i}_{pub['doi']}"):
+                    save_bookmark(pub)
+                    st.rerun()
+
+        # Tab-delimited copy box for adding to Google Sheet
+        topics_str = ", ".join(terms)
+        row_paste_text = f"{pub['author_year']}\t{topics_str}\t\t\t\t{pub['title']} ({pub['journal']})\t{pub['doi']}"
+        with col2:
+            with st.popover("📋 Copy Row for Sheet"):
+                st.caption("Copy and paste directly across your sheet columns:")
+                st.code(row_paste_text, language="text")
+
+        st.divider()
+
+    if st.button("Dismiss & Open Dashboard", type="primary", use_container_width=True):
+        st.session_state.radar_dismissed = True
+        st.rerun()
+
+
+# Initialize state to track if modal was dismissed for this session
+if "radar_dismissed" not in st.session_state:
+    st.session_state.radar_dismissed = False
+
+# Trigger the dialog on startup if there are new hits and it hasn't been dismissed yet
 if enable_radar and active_radar_terms:
-    with st.spinner("Scanning academic journals for recent publications..."):
-        recent_hits = check_recent_publications(active_radar_terms, max_results=5)
+    recent_hits = check_recent_publications(active_radar_terms, max_results=5)
+    
+    # Optional button to re-open the popup anytime
+    if recent_hits and st.sidebar.button(f"🔔 View Radar Alerts ({len(recent_hits)})"):
+        st.session_state.radar_dismissed = False
 
-    if recent_hits:
-        with st.expander(f"🔔 **{len(recent_hits)} New Articles Found (Past 1 Year)** for: *{', '.join(active_radar_terms)}*", expanded=True):
-            for i, pub in enumerate(recent_hits):
-                st.markdown(
-                    f"**[{pub['title']}]({pub['link']})**  \n"
-                    f"📖 *{pub['journal']}* | 👤 {pub['author']} et al. | 📅 `{pub['date']}` | 🔗 [{pub['doi']}]({pub['link']})"
-                )
-
-                # Format pre-filled tab-delimited text to paste directly across your sheet columns
-                topics_str = ", ".join(active_radar_terms)
-                row_paste_text = f"{pub['author_year']}\t{topics_str}\t\t\t\t{pub['title']} ({pub['journal']})\t{pub['doi']}"
-                
-                with st.popover(f"📋 Copy Row for Sheet (#{i+1})"):
-                    st.caption("Click into the box, copy (Ctrl+C / Cmd+C), and paste directly into an empty row in Google Sheets:")
-                    st.code(row_paste_text, language="text")
-
-                st.divider()
-    else:
-        st.caption(f"✓ No new articles found from the past year matching: *{', '.join(active_radar_terms)}*")
-
-# --- 2. Database Explorer Section ---
-st.write(f"Showing **{len(filtered_df)}** of **{len(df)}** studies")
-
-csv_data = filtered_df.to_csv(index=False).encode('utf-8')
-st.download_button(
-    label="📥 Export Results to CSV",
-    data=csv_data,
-    file_name="filtered_literature.csv",
-    mime="text/csv",
-    key="download_filtered_csv_btn"
-)
-
-st.markdown("---")
-
-if len(filtered_df) == 0:
-    st.info("No papers match your selected filter criteria. Try clearing some filters.")
-else:
-    for idx, row in filtered_df.iterrows():
-        author_val = str(row.get(author_col, "")).strip()
-        card_title = author_val if author_val else f"Study #{idx + 1}"
-
-        with st.expander(f"📄 **{card_title}**", expanded=True):
-            col1, col2 = st.columns([1, 1])
-
-            with col1:
-                if theory_col in row and str(row[theory_col]).strip():
-                    st.markdown(f"**Theory Used:** {row[theory_col]}")
-                if method_col in row and str(row[method_col]).strip():
-                    st.markdown(f"**Statistical Analysis:** {row[method_col]}")
-                if sample_col in row and str(row[sample_col]).strip():
-                    st.markdown(f"**Group Studied:** {row[sample_col]}")
-
-            with col2:
-                if kw_col in row and str(row[kw_col]).strip():
-                    st.markdown(f"**Main Topics:** `{row[kw_col]}`")
-                if doi_col in row and str(row[doi_col]).strip():
-                    doi_val = str(row[doi_col]).strip()
-                    doi_link = doi_val if doi_val.startswith("http") else f"https://doi.org/{doi_val}"
-                    st.markdown(f"🔗 **DOI:** [{doi_val}]({doi_link})")
-
-            if notes_col in row and str(row[notes_col]).strip():
-                st.markdown(f"**Findings:**\n> {row[notes_col]}")
+    if recent_hits and not st.session_state.radar_dismissed:
+        show_radar_dialog(recent_hits, active_radar_terms)
