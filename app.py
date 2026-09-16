@@ -93,27 +93,22 @@ def get_unique_items(series: pd.Series) -> list:
 def check_recent_publications(keywords: list[str], max_results: int = 5):
     """
     Queries Crossref for journal articles from the past 365 days where
-    the keywords appear in the title/abstract, restricted to developmental,
-    psychological, health, and family-oriented journals.
+    the keywords appear in the title, scoped to developmental/health/family disciplines.
     """
     if not keywords:
         return []
 
     one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
-    
-    # Enclose multiple terms to encourage matching the concepts in titles
     title_query = " ".join([f'"{k}"' if " " in k else k for k in keywords])
-
-    # Relevant journal/field scoping terms
     relevant_disciplines = "development psychology health adolescent youth child family pediatric clinical psychiatry"
 
     url = "https://api.crossref.org/works"
     params = {
-        "query.title": title_query,                # Forces keywords to be in the paper's title
-        "query.container-title": relevant_disciplines, # Scopes to health/psych/family journals
+        "query.title": title_query,
+        "query.container-title": relevant_disciplines,
         "filter": f"from-pub-date:{one_year_ago},type:journal-article",
         "rows": max_results,
-        "sort": "score",                           # Sort by keyword relevance first
+        "sort": "score",
         "order": "desc"
     }
 
@@ -133,12 +128,10 @@ def check_recent_publications(keywords: list[str], max_results: int = 5):
                 link = item.get("URL", f"https://doi.org/{doi}")
                 journal = item.get("container-title", ["Unknown Journal"])[0]
 
-                # Publication date
                 date_parts = item.get("published", {}).get("date-parts", [[None]])[0]
                 pub_date = "-".join([str(p) for p in date_parts if p]) if date_parts else "Recent"
                 pub_year = str(date_parts[0]) if date_parts and date_parts[0] else ""
 
-                # First author
                 authors = item.get("author", [])
                 first_author = authors[0].get("family", "Unknown") if authors else "Unknown"
                 author_year = f"{first_author} et al. ({pub_year})" if pub_year else first_author
@@ -157,10 +150,12 @@ def check_recent_publications(keywords: list[str], max_results: int = 5):
         return []
     return []
 
+
 # ==========================================
-# 5. SAVED SEARCHES MANAGEMENT
+# 5. SAVED SEARCHES & BOOKMARKS STORAGE
 # ==========================================
 SAVED_SEARCHES_FILE = "saved_searches.json"
+BOOKMARKS_FILE = "bookmarks.json"
 
 def load_saved_searches() -> dict:
     if os.path.exists(SAVED_SEARCHES_FILE):
@@ -183,8 +178,6 @@ def delete_search(name: str):
         del searches[name]
         with open(SAVED_SEARCHES_FILE, "w") as f:
             json.dump(searches, f, indent=2)
-
-BOOKMARKS_FILE = "bookmarks.json"
 
 def load_bookmarks() -> list:
     if os.path.exists(BOOKMARKS_FILE):
@@ -238,14 +231,13 @@ except Exception as e:
     st.error(f"Could not load file from Google Sheets. Error: {e}")
     st.stop()
 
-# Logout button
 if st.sidebar.button("🔒 Log Out"):
     st.session_state.authenticated = False
     st.rerun()
 
 
 # ==========================================
-# 7. SIDEBAR: SAVED SEARCHES
+# 7. SIDEBAR: SAVED SEARCHES & BOOKMARKS
 # ==========================================
 st.sidebar.markdown("---")
 st.sidebar.subheader("⭐ Saved Searches")
@@ -262,6 +254,20 @@ if selected_saved != "-- None --":
 
 loaded_criteria = saved_searches.get(selected_saved, {}) if selected_saved != "-- None --" else {}
 
+# Saved Bookmarks Tray in Sidebar
+saved_bms = load_bookmarks()
+with st.sidebar.expander(f"🔖 Bookmarked Papers ({len(saved_bms)})"):
+    if not saved_bms:
+        st.caption("No papers bookmarked yet.")
+    else:
+        for bm in saved_bms:
+            st.markdown(f"**[{bm['title']}]({bm['link']})**")
+            st.caption(f"{bm['author_year']} | *{bm['journal']}*")
+            if st.button("Remove", key=f"del_bm_{bm['doi']}", type="secondary"):
+                remove_bookmark(bm['doi'])
+                st.rerun()
+            st.divider()
+
 
 # ==========================================
 # 8. SIDEBAR: FILTER CONTROLS & RADAR UI
@@ -269,7 +275,6 @@ loaded_criteria = saved_searches.get(selected_saved, {}) if selected_saved != "-
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Filters")
 
-# Exact column mappings
 author_col = "Article Authors and Year"
 kw_col     = "Main Topics"
 sample_col = "Group Studied"
@@ -360,19 +365,6 @@ if enable_radar:
 else:
     active_radar_terms = []
 
-# --- Saved Bookmarks Tray ---
-saved_bms = load_bookmarks()
-with st.sidebar.expander(f"🔖 Bookmarked Papers ({len(saved_bms)})"):
-    if not saved_bms:
-        st.caption("No papers bookmarked yet.")
-    else:
-        for bm in saved_bms:
-            st.markdown(f"**[{bm['title']}]({bm['link']})**")
-            st.caption(f"{bm['author_year']} | *{bm['journal']}*")
-            if st.button("Remove", key=f"del_bm_{bm['doi']}", type="secondary"):
-                remove_bookmark(bm['doi'])
-                st.rerun()
-            st.divider()
 
 # ==========================================
 # 9. FILTERING ENGINE (PANDAS)
@@ -410,14 +402,12 @@ if findings_query and notes_col in df.columns:
     filtered_df = filtered_df[filtered_df[notes_col].astype(str).str.contains(findings_query, case=False, na=False)]
 
 
-
-
 # ==========================================
-# 10. DISPLAY RADAR MODAL & RESULTS
+# 10. DISPLAY RADAR MODAL & SPREADSHEET RESULTS
 # ==========================================
 st.title("📚 Literature Review Explorer")
 
-# --- POPUP MODAL FOR NEW ARTICLES ---
+# --- POPUP MODAL FUNCTION ---
 @st.dialog("🔔 New Research Radar Alert", width="large")
 def show_radar_dialog(hits, terms):
     st.markdown(f"**New papers published in the past year matching:** `{', '.join(terms)}`")
@@ -428,7 +418,7 @@ def show_radar_dialog(hits, terms):
     bookmarked_dois = {b.get("doi") for b in saved_bms}
 
     for i, pub in enumerate(hits):
-        st.markdown(f"### [{pub['title']}]({pub['link']})")
+        st.markdown(f"#### [{pub['title']}]({pub['link']})")
         st.markdown(f"📖 *{pub['journal']}*  \n👤 {pub['author_year']} | 📅 `{pub['date']}` | 🔗 [{pub['doi']}]({pub['link']})")
 
         col1, col2 = st.columns([1, 2])
@@ -440,7 +430,6 @@ def show_radar_dialog(hits, terms):
                     save_bookmark(pub)
                     st.rerun()
 
-        # Tab-delimited copy box for adding to Google Sheet
         topics_str = ", ".join(terms)
         row_paste_text = f"{pub['author_year']}\t{topics_str}\t\t\t\t{pub['title']} ({pub['journal']})\t{pub['doi']}"
         with col2:
@@ -451,21 +440,65 @@ def show_radar_dialog(hits, terms):
         st.divider()
 
     if st.button("Dismiss & Open Dashboard", type="primary", use_container_width=True):
-        st.session_state.radar_dismissed = True
+        terms_key = "_".join(sorted(terms))
+        st.session_state[f"dismissed_{terms_key}"] = True
         st.rerun()
 
 
-# Initialize state to track if modal was dismissed for this session
-if "radar_dismissed" not in st.session_state:
-    st.session_state.radar_dismissed = False
-
-# Trigger the dialog on startup if there are new hits and it hasn't been dismissed yet
+# --- RADAR TRIGGER LOGIC ---
 if enable_radar and active_radar_terms:
+    terms_key = "_".join(sorted(active_radar_terms))
     recent_hits = check_recent_publications(active_radar_terms, max_results=5)
-    
-    # Optional button to re-open the popup anytime
-    if recent_hits and st.sidebar.button(f"🔔 View Radar Alerts ({len(recent_hits)})"):
-        st.session_state.radar_dismissed = False
 
-    if recent_hits and not st.session_state.radar_dismissed:
-        show_radar_dialog(recent_hits, active_radar_terms)
+    if recent_hits:
+        # Re-open button always available in sidebar
+        if st.sidebar.button(f"🔔 View Radar Alerts ({len(recent_hits)})"):
+            st.session_state[f"dismissed_{terms_key}"] = False
+
+        # Automatically pop up if this specific term query hasn't been dismissed yet
+        if not st.session_state.get(f"dismissed_{terms_key}", False):
+            show_radar_dialog(recent_hits, active_radar_terms)
+
+
+# --- SPREADSHEET DATABASE RESULTS (ALWAYS VISIBLE) ---
+st.write(f"Showing **{len(filtered_df)}** of **{len(df)}** studies")
+
+csv_data = filtered_df.to_csv(index=False).encode('utf-8')
+st.download_button(
+    label="📥 Export Results to CSV",
+    data=csv_data,
+    file_name="filtered_literature.csv",
+    mime="text/csv",
+    key="download_filtered_csv_btn"
+)
+
+st.markdown("---")
+
+if len(filtered_df) == 0:
+    st.info("No papers match your selected filter criteria. Try clearing some filters.")
+else:
+    for idx, row in filtered_df.iterrows():
+        author_val = str(row.get(author_col, "")).strip()
+        card_title = author_val if author_val else f"Study #{idx + 1}"
+
+        with st.expander(f"📄 **{card_title}**", expanded=True):
+            col1, col2 = st.columns([1, 1])
+
+            with col1:
+                if theory_col in row and str(row[theory_col]).strip():
+                    st.markdown(f"**Theory Used:** {row[theory_col]}")
+                if method_col in row and str(row[method_col]).strip():
+                    st.markdown(f"**Statistical Analysis:** {row[method_col]}")
+                if sample_col in row and str(row[sample_col]).strip():
+                    st.markdown(f"**Group Studied:** {row[sample_col]}")
+
+            with col2:
+                if kw_col in row and str(row[kw_col]).strip():
+                    st.markdown(f"**Main Topics:** `{row[kw_col]}`")
+                if doi_col in row and str(row[doi_col]).strip():
+                    doi_val = str(row[doi_col]).strip()
+                    doi_link = doi_val if doi_val.startswith("http") else f"https://doi.org/{doi_val}"
+                    st.markdown(f"🔗 **DOI:** [{doi_val}]({doi_link})")
+
+            if notes_col in row and str(row[notes_col]).strip():
+                st.markdown(f"**Findings:**\n> {row[notes_col]}")
