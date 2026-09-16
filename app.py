@@ -1,4 +1,42 @@
-import io
+# ==========================================
+# 9. FILTERING ENGINE (PANDAS)
+# ==========================================
+# CRITICAL: This line must be flush-left (unindented) and before any filtering checks!
+filtered_df = df.copy()
+
+def row_matches_items(cell_value, selected_items, mode="Any (OR)"):
+    if not selected_items:
+        return True
+    cleaned_cell = re.sub(r"\(.*?\)", "", str(cell_value)).lower()
+    selected_lower = [sel.strip().lower() for sel in selected_items if sel.strip()]
+
+    if mode == "All (AND)":
+        return all(sel in cleaned_cell for sel in selected_lower)
+    else:
+        return any(sel in cleaned_cell for sel in selected_lower)
+
+if selected_keywords and kw_col in df.columns:
+    mask = filtered_df[kw_col].apply(lambda x: row_matches_items(x, selected_keywords, kw_mode))
+    filtered_df = filtered_df[mask]
+
+if selected_theories and theory_col in df.columns:
+    mask = filtered_df[theory_col].apply(lambda x: row_matches_items(x, selected_theories, "Any (OR)"))
+    filtered_df = filtered_df[mask]
+
+if selected_methods and method_col in df.columns:
+    mask = filtered_df[method_col].apply(lambda x: row_matches_items(x, selected_methods, "Any (OR)"))
+    filtered_df = filtered_df[mask]
+
+if selected_groups and sample_col in df.columns:
+    mask = filtered_df[sample_col].apply(lambda x: row_matches_items(x, selected_groups, "Any (OR)"))
+    filtered_df = filtered_df[mask]
+
+if findings_query and notes_col in df.columns:
+    filtered_df = filtered_df[
+        filtered_df[notes_col]
+        .astype(str)
+        .str.contains(findings_query, case=False, na=False)
+    ]import io
 import json
 import os
 import re
