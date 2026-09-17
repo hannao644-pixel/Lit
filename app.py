@@ -69,16 +69,18 @@ def format_google_sheets_url(url: str) -> str:
 def load_data(source_url: str) -> pd.DataFrame:
     """Reads live data directly from Google Sheets while preserving literal N/A values."""
     export_url = format_google_sheets_url(source_url)
-    
-    # keep_default_na=False ensures "N/A", "NA", and "None" are read as actual text
     df = pd.read_csv(export_url, keep_default_na=False)
     df.columns = [str(c).strip() for c in df.columns]
     return df
 
+
+# ==========================================
+# 4. HELPER FUNCTIONS & CROSSREF RADAR
+# ==========================================
 def get_unique_items(series: pd.Series) -> list:
     """
     Extracts unique terms separated by commas or semicolons,
-    stripping out parentheses and consolidating case differences.
+    stripping out parentheses and consolidating case duplicates.
     """
     all_items = {}
     for entry in series.dropna():
@@ -88,7 +90,6 @@ def get_unique_items(series: pd.Series) -> list:
             cleaned = item.strip()
             if cleaned and cleaned.upper() not in ["N/A", "NA"]:
                 lower_key = cleaned.lower()
-                # Store the most capitalized or clean version encountered
                 if lower_key not in all_items:
                     all_items[lower_key] = cleaned
                 elif cleaned.isupper() or cleaned.istitle():
@@ -99,24 +100,25 @@ def get_unique_items(series: pd.Series) -> list:
 @st.cache_data(ttl=3600)
 def check_recent_publications(keywords: list[str], max_results: int = 5):
     """
-    Queries Crossref for journal articles from the past 365 days where
+    Queries Crossref for journal articles from the past 30 days where
     the keywords appear in the title, scoped to developmental/health/family disciplines.
     """
     if not keywords:
         return []
 
-    one_year_ago = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+    # Exactly 30 days back from today
+    one_month_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
     title_query = " ".join([f'"{k}"' if " " in k else k for k in keywords])
     relevant_disciplines = (
-    "development psychology health adolescent youth child family pediatric "
-    "clinical psychiatry social emotional 'social-emotional' wellbeing"
-)
+        "development psychology health adolescent youth child family pediatric "
+        "clinical psychiatry social emotional 'social-emotional' wellbeing"
+    )
 
     url = "https://api.crossref.org/works"
     params = {
         "query.title": title_query,
         "query.container-title": relevant_disciplines,
-        "filter": f"from-pub-date:{one_year_ago},type:journal-article",
+        "filter": f"from-pub-date:{one_month_ago},type:journal-article",
         "rows": max_results,
         "sort": "score",
         "order": "desc"
@@ -190,7 +192,6 @@ def delete_search(name: str):
             json.dump(searches, f, indent=2)
 
 def load_alert_bookmarks() -> dict:
-    """Loads whole alert bundles saved by keyword title."""
     if os.path.exists(ALERT_BOOKMARKS_FILE):
         try:
             with open(ALERT_BOOKMARKS_FILE, "r") as f:
@@ -200,7 +201,6 @@ def load_alert_bookmarks() -> dict:
     return {}
 
 def save_alert_bookmark(title: str, hits: list, terms: list):
-    """Saves an entire alert notification bundle."""
     bms = load_alert_bookmarks()
     bms[title] = {
         "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -211,7 +211,6 @@ def save_alert_bookmark(title: str, hits: list, terms: list):
         json.dump(bms, f, indent=2)
 
 def delete_alert_bookmark(title: str):
-    """Deletes an alert bundle."""
     bms = load_alert_bookmarks()
     if title in bms:
         del bms[title]
@@ -282,7 +281,7 @@ with st.sidebar.expander(f"🔖 Bookmarked Alerts ({len(saved_alert_bms)})"):
         for b_title, b_data in list(saved_alert_bms.items()):
             st.markdown(f"**{b_title}**")
             st.caption(f"📅 Saved: {b_data.get('saved_at', '')} | Papers: {len(b_data.get('hits', []))}")
-            
+
             col_view, col_del = st.columns([2, 1])
             with col_view:
                 if st.button("View Alert", key=f"view_alert_{b_title}"):
@@ -347,7 +346,9 @@ selected_methods = st.sidebar.multiselect(
 all_groups = get_unique_items(df[sample_col]) if sample_col in df.columns else []
 default_gp = loaded_criteria.get("groups", [])
 selected_groups = st.sidebar.multiselect(
-    "Group Studied", options=all_groups, default=default_gp
+    "Group Studied",
+    options=all_groups,
+    default=default_gp
 )
 
 # 5. Free Text Search in Findings
@@ -372,7 +373,7 @@ with st.sidebar.expander("💾 Save This Search Configuration"):
 
 # 6. New Paper Radar UI (Sidebar)
 st.sidebar.markdown("---")
-st.sidebar.subheader("📡 New Paper Radar (Past 1 Year)")
+st.sidebar.subheader("📡 New Paper Radar (Past Month)")
 enable_radar = st.sidebar.checkbox("Enable New Paper Alerts", value=True)
 
 if enable_radar:
@@ -390,19 +391,6 @@ else:
     active_radar_terms = []
 
 
-def row_matches_items(cell_value, selected_items, mode="Any (OR)"):
-    if not selected_items:
-        return True
-    
-    # Strip parentheses from cell content before comparing
-    cleaned_cell = re.sub(r"\(.*?\)", "", str(cell_value)).lower()
-    selected_lower = [sel.strip().lower() for sel in selected_items if sel.strip()]
-
-    if mode == "All (AND)":
-        return all(sel in cleaned_cell for sel in selected_lower)
-    else:
-        return any(sel in cleaned_cell for sel in selected_lower)
-
 # ==========================================
 # 9. FILTERING ENGINE (PANDAS)
 # ==========================================
@@ -411,12 +399,11 @@ filtered_df = df.copy()
 def row_matches_items(cell_value, selected_items, mode="Any (OR)"):
     """
     Checks if a row matches the selected items, fully case-insensitive,
-    stripping parentheses and extra whitespace.
+    stripping parentheses and their contents from the cell text.
     """
     if not selected_items:
         return True
 
-    # Strip parentheses and convert spreadsheet cell text to lowercase
     cleaned_cell = re.sub(r"\(.*?\)", "", str(cell_value)).lower()
     selected_lower = [sel.strip().lower() for sel in selected_items if sel.strip()]
 
@@ -425,27 +412,22 @@ def row_matches_items(cell_value, selected_items, mode="Any (OR)"):
     else:
         return any(sel in cleaned_cell for sel in selected_lower)
 
-# 1. Main Topics (Keywords) Filter
 if selected_keywords and kw_col in df.columns:
     mask = filtered_df[kw_col].apply(lambda x: row_matches_items(x, selected_keywords, kw_mode))
     filtered_df = filtered_df[mask]
 
-# 2. Theory Used Filter
 if selected_theories and theory_col in df.columns:
     mask = filtered_df[theory_col].apply(lambda x: row_matches_items(x, selected_theories, "Any (OR)"))
     filtered_df = filtered_df[mask]
 
-# 3. Statistical Analysis Filter
 if selected_methods and method_col in df.columns:
     mask = filtered_df[method_col].apply(lambda x: row_matches_items(x, selected_methods, "Any (OR)"))
     filtered_df = filtered_df[mask]
 
-# 4. Group Studied Filter
 if selected_groups and sample_col in df.columns:
     mask = filtered_df[sample_col].apply(lambda x: row_matches_items(x, selected_groups, "Any (OR)"))
     filtered_df = filtered_df[mask]
 
-# 5. Free Text Search in Findings & Notes
 if findings_query and notes_col in df.columns:
     filtered_df = filtered_df[
         filtered_df[notes_col]
@@ -464,7 +446,7 @@ st.title("📚 Literature Review Explorer")
 def show_radar_dialog(hits, terms):
     alert_title = f"Alert: {', '.join(terms)} ({len(hits)} papers)"
     st.subheader(alert_title)
-    st.caption("Review new findings below. You can bookmark this entire notification for later or dismiss it to view your library.")
+    st.caption("New papers published in the past month matching your keywords.")
 
     # Action Bar: Bookmark Whole Notification or Dismiss
     saved_alert_bms = load_alert_bookmarks()
@@ -490,7 +472,7 @@ def show_radar_dialog(hits, terms):
 
     st.divider()
 
-    # List the papers in this notification
+    # List papers in this notification
     for pub in hits:
         st.markdown(f"#### [{pub['title']}]({pub['link']})")
         st.markdown(f"📖 *{pub['journal']}*  \n👤 {pub['author_year']} | 📅 `{pub['date']}` | 🔗 [{pub['doi']}]({pub['link']})")
@@ -505,7 +487,6 @@ def show_radar_dialog(hits, terms):
 
 
 # --- RADAR TRIGGER LOGIC ---
-# Check if user clicked to review a bookmarked alert from the sidebar
 if "active_view_bundle" in st.session_state:
     _, b_hits, b_terms = st.session_state["active_view_bundle"]
     show_radar_dialog(b_hits, b_terms)
@@ -515,11 +496,9 @@ elif enable_radar and active_radar_terms:
     recent_hits = check_recent_publications(active_radar_terms, max_results=5)
 
     if recent_hits:
-        # Re-open button in sidebar
         if st.sidebar.button(f"🔔 View Radar Alerts ({len(recent_hits)})"):
             st.session_state[f"dismissed_{terms_key}"] = False
 
-        # Automatically open if not dismissed for these terms
         if not st.session_state.get(f"dismissed_{terms_key}", False):
             show_radar_dialog(recent_hits, active_radar_terms)
 
@@ -569,7 +548,7 @@ else:
                 doi_val = str(row.get(doi_col, "")).strip()
                 if doi_val:
                     if doi_val.upper() in ["N/A", "NA"]:
-                        st.markdown(f"🔗 **DOI:** N/A")
+                        st.markdown("🔗 **DOI:** N/A")
                     else:
                         doi_link = doi_val if doi_val.startswith("http") else f"https://doi.org/{doi_val}"
                         st.markdown(f"🔗 **DOI:** [{doi_val}]({doi_link})")
