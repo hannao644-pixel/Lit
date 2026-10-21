@@ -2,9 +2,7 @@ import io
 import json
 import os
 import re
-from datetime import datetime, timedelta
 import pandas as pd
-import requests
 import streamlit as st
 
 # ==========================================
@@ -75,7 +73,7 @@ def load_data(source_url: str) -> pd.DataFrame:
 
 
 # ==========================================
-# 4. HELPER FUNCTIONS & CROSSREF RADAR
+# 4. HELPER FUNCTIONS
 # ==========================================
 def get_unique_items(series: pd.Series) -> list:
     """
@@ -97,125 +95,53 @@ def get_unique_items(series: pd.Series) -> list:
 
     return sorted(list(all_items.values()), key=lambda s: s.lower())
 
-@st.cache_data(ttl=3600)
-def check_recent_publications(keywords: list[str], max_results: int = 5):
-    """
-    Queries Crossref for journal articles from the past 30 days where
-    the keywords appear in the title, scoped to developmental/health/family disciplines.
-    """
-    if not keywords:
-        return []
-
-    # Exactly 30 days back from today
-    one_month_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
-    title_query = " ".join([f'"{k}"' if " " in k else k for k in keywords])
-    relevant_disciplines = (
-        "development psychology health adolescent youth child family pediatric "
-        "clinical psychiatry social emotional 'social-emotional' wellbeing"
-    )
-
-    url = "https://api.crossref.org/works"
-    params = {
-        "query.title": title_query,
-        "query.container-title": relevant_disciplines,
-        "filter": f"from-pub-date:{one_month_ago},type:journal-article",
-        "rows": max_results,
-        "sort": "score",
-        "order": "desc"
-    }
-
-    try:
-        response = requests.get(
-            url,
-            params=params,
-            headers={"User-Agent": "LitReviewExplorer/1.0 (mailto:researcher@example.com)"},
-            timeout=8
-        )
-        if response.status_code == 200:
-            items = response.json().get("message", {}).get("items", [])
-            matches = []
-            for item in items:
-                title = item.get("title", ["Untitled"])[0]
-                doi = item.get("DOI", "")
-                link = item.get("URL", f"https://doi.org/{doi}")
-                journal = item.get("container-title", ["Unknown Journal"])[0]
-
-                date_parts = item.get("published", {}).get("date-parts", [[None]])[0]
-                pub_date = "-".join([str(p) for p in date_parts if p]) if date_parts else "Recent"
-                pub_year = str(date_parts[0]) if date_parts and date_parts[0] else ""
-
-                authors = item.get("author", [])
-                first_author = authors[0].get("family", "Unknown") if authors else "Unknown"
-                author_year = f"{first_author} et al. ({pub_year})" if pub_year else first_author
-
-                matches.append({
-                    "title": title,
-                    "journal": journal,
-                    "author": first_author,
-                    "author_year": author_year,
-                    "date": pub_date,
-                    "link": link,
-                    "doi": doi
-                })
-            return matches
-    except Exception:
-        return []
-    return []
-
 
 # ==========================================
-# 5. SAVED SEARCHES & BOOKMARKS STORAGE
+# 5. PERSISTENT SAVED SEARCHES SYSTEM
 # ==========================================
 SAVED_SEARCHES_FILE = "saved_searches.json"
-ALERT_BOOKMARKS_FILE = "alert_bookmarks.json"
 
-def load_saved_searches() -> dict:
+def get_base_saved_searches() -> dict:
+    """Loads searches from st.secrets if configured, or local file fallback."""
+    searches = {}
+    
+    # 1. First check st.secrets (permanent on Streamlit Cloud)
+    if "saved_searches" in st.secrets:
+        try:
+            searches.update(dict(st.secrets["saved_searches"]))
+        except Exception:
+            pass
+
+    # 2. Check local file if it exists
     if os.path.exists(SAVED_SEARCHES_FILE):
         try:
             with open(SAVED_SEARCHES_FILE, "r") as f:
-                return json.load(f)
+                searches.update(json.load(f))
         except Exception:
-            return {}
-    return {}
+            pass
+
+    return searches
+
+# Initialize saved searches in session state
+if "saved_searches" not in st.session_state:
+    st.session_state.saved_searches = get_base_saved_searches()
 
 def save_search(name: str, criteria: dict):
-    searches = load_saved_searches()
-    searches[name] = criteria
-    with open(SAVED_SEARCHES_FILE, "w") as f:
-        json.dump(searches, f, indent=2)
+    st.session_state.saved_searches[name] = criteria
+    try:
+        with open(SAVED_SEARCHES_FILE, "w") as f:
+            json.dump(st.session_state.saved_searches, f, indent=2)
+    except Exception:
+        pass
 
 def delete_search(name: str):
-    searches = load_saved_searches()
-    if name in searches:
-        del searches[name]
-        with open(SAVED_SEARCHES_FILE, "w") as f:
-            json.dump(searches, f, indent=2)
-
-def load_alert_bookmarks() -> dict:
-    if os.path.exists(ALERT_BOOKMARKS_FILE):
+    if name in st.session_state.saved_searches:
+        del st.session_state.saved_searches[name]
         try:
-            with open(ALERT_BOOKMARKS_FILE, "r") as f:
-                return json.load(f)
+            with open(SAVED_SEARCHES_FILE, "w") as f:
+                json.dump(st.session_state.saved_searches, f, indent=2)
         except Exception:
-            return {}
-    return {}
-
-def save_alert_bookmark(title: str, hits: list, terms: list):
-    bms = load_alert_bookmarks()
-    bms[title] = {
-        "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "terms": terms,
-        "hits": hits
-    }
-    with open(ALERT_BOOKMARKS_FILE, "w") as f:
-        json.dump(bms, f, indent=2)
-
-def delete_alert_bookmark(title: str):
-    bms = load_alert_bookmarks()
-    if title in bms:
-        del bms[title]
-        with open(ALERT_BOOKMARKS_FILE, "w") as f:
-            json.dump(bms, f, indent=2)
+            pass
 
 
 # ==========================================
@@ -254,13 +180,12 @@ if st.sidebar.button("🔒 Log Out"):
 
 
 # ==========================================
-# 7. SIDEBAR: SAVED SEARCHES & BOOKMARKS
+# 7. SIDEBAR: SAVED SEARCHES (PERSISTENT)
 # ==========================================
 st.sidebar.markdown("---")
 st.sidebar.subheader("⭐ Saved Searches")
 
-saved_searches = load_saved_searches()
-search_options = ["-- None --"] + list(saved_searches.keys())
+search_options = ["-- None --"] + list(st.session_state.saved_searches.keys())
 selected_saved = st.sidebar.selectbox("Load a preset search:", options=search_options)
 
 if selected_saved != "-- None --":
@@ -269,33 +194,34 @@ if selected_saved != "-- None --":
         st.sidebar.success(f"Deleted '{selected_saved}'!")
         st.rerun()
 
-loaded_criteria = saved_searches.get(selected_saved, {}) if selected_saved != "-- None --" else {}
+loaded_criteria = st.session_state.saved_searches.get(selected_saved, {}) if selected_saved != "-- None --" else {}
 
-# Saved Alert Notifications Tray
-st.sidebar.markdown("---")
-saved_alert_bms = load_alert_bookmarks()
-with st.sidebar.expander(f"🔖 Bookmarked Alerts ({len(saved_alert_bms)})"):
-    if not saved_alert_bms:
-        st.caption("No alert notifications bookmarked yet.")
-    else:
-        for b_title, b_data in list(saved_alert_bms.items()):
-            st.markdown(f"**{b_title}**")
-            st.caption(f"📅 Saved: {b_data.get('saved_at', '')} | Papers: {len(b_data.get('hits', []))}")
+# Backup / Restore Utility (Protects searches across server reboots)
+with st.sidebar.expander("📦 Backup / Restore Searches"):
+    st.caption("Since Streamlit Cloud containers reset on logout, you can download or upload your search profiles here:")
+    searches_json_str = json.dumps(st.session_state.saved_searches, indent=2)
+    st.download_button(
+        label="💾 Download Searches Backup",
+        data=searches_json_str,
+        file_name="saved_searches.json",
+        mime="application/json",
+        use_container_width=True
+    )
 
-            col_view, col_del = st.columns([2, 1])
-            with col_view:
-                if st.button("View Alert", key=f"view_alert_{b_title}"):
-                    st.session_state["active_view_bundle"] = (b_title, b_data["hits"], b_data["terms"])
-                    st.rerun()
-            with col_del:
-                if st.button("Delete", key=f"del_alert_{b_title}", type="secondary"):
-                    delete_alert_bookmark(b_title)
-                    st.rerun()
-            st.divider()
+    uploaded_searches = st.file_uploader("Upload searches backup (.json)", type=["json"])
+    if uploaded_searches is not None:
+        try:
+            restored = json.load(uploaded_searches)
+            if isinstance(restored, dict):
+                st.session_state.saved_searches.update(restored)
+                st.success("Searches restored!")
+                st.rerun()
+        except Exception as err:
+            st.error(f"Invalid file: {err}")
 
 
 # ==========================================
-# 8. SIDEBAR: FILTER CONTROLS & RADAR UI
+# 8. SIDEBAR: FILTER CONTROLS
 # ==========================================
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔍 Filters")
@@ -356,9 +282,9 @@ default_search = loaded_criteria.get("notes_query", "")
 findings_query = st.sidebar.text_input("Search Findings & Notes", value=default_search)
 
 # Save current search expander
-with st.sidebar.expander("💾 Save This Search Configuration"):
+with st.sidebar.expander("💾 Save Current Filter Set"):
     new_search_name = st.text_input("Search Name")
-    if st.button("Save Current Filters"):
+    if st.button("Save Filter Preset"):
         if new_search_name.strip():
             save_search(new_search_name.strip(), {
                 "keywords": selected_keywords,
@@ -370,25 +296,6 @@ with st.sidebar.expander("💾 Save This Search Configuration"):
             })
             st.success(f"Saved '{new_search_name}'!")
             st.rerun()
-
-# 6. New Paper Radar UI (Sidebar)
-st.sidebar.markdown("---")
-st.sidebar.subheader("📡 New Paper Radar (Past Month)")
-enable_radar = st.sidebar.checkbox("Enable New Paper Alerts", value=True)
-
-if enable_radar:
-    radar_sheet_kw = st.sidebar.multiselect(
-        "Track sheet keywords:",
-        options=all_keywords,
-        default=all_keywords[:2] if len(all_keywords) >= 2 else []
-    )
-    custom_radar_kw = st.sidebar.text_input("Or custom keywords:", placeholder="e.g. adolescent wellbeing")
-
-    active_radar_terms = list(radar_sheet_kw)
-    if custom_radar_kw.strip():
-        active_radar_terms.extend([k.strip() for k in custom_radar_kw.split(",") if k.strip()])
-else:
-    active_radar_terms = []
 
 
 # ==========================================
@@ -437,73 +344,10 @@ if findings_query and notes_col in df.columns:
 
 
 # ==========================================
-# 10. DISPLAY RADAR MODAL & SPREADSHEET RESULTS
+# 10. DISPLAY SPREADSHEET RESULTS
 # ==========================================
 st.title("📚 Literature Review Explorer")
 
-# --- POPUP MODAL FUNCTION ---
-@st.dialog("🔔 New Research Radar Alert", width="large")
-def show_radar_dialog(hits, terms):
-    alert_title = f"Alert: {', '.join(terms)} ({len(hits)} papers)"
-    st.subheader(alert_title)
-    st.caption("New papers published in the past month matching your keywords.")
-
-    # Action Bar: Bookmark Whole Notification or Dismiss
-    saved_alert_bms = load_alert_bookmarks()
-    is_already_bookmarked = alert_title in saved_alert_bms
-
-    btn_col1, btn_col2 = st.columns([1, 1])
-    with btn_col1:
-        if is_already_bookmarked:
-            st.success("✓ Entire Alert Bookmarked")
-        else:
-            if st.button("🔖 Bookmark Alert for Later", use_container_width=True):
-                save_alert_bookmark(alert_title, hits, terms)
-                st.success("Saved to your bookmarks tray!")
-                st.rerun()
-
-    with btn_col2:
-        if st.button("Dismiss & Open Dashboard", type="primary", use_container_width=True):
-            terms_key = "_".join(sorted(terms))
-            st.session_state[f"dismissed_{terms_key}"] = True
-            if "active_view_bundle" in st.session_state:
-                del st.session_state["active_view_bundle"]
-            st.rerun()
-
-    st.divider()
-
-    # List papers in this notification
-    for pub in hits:
-        st.markdown(f"#### [{pub['title']}]({pub['link']})")
-        st.markdown(f"📖 *{pub['journal']}*  \n👤 {pub['author_year']} | 📅 `{pub['date']}` | 🔗 [{pub['doi']}]({pub['link']})")
-
-        topics_str = ", ".join(terms)
-        row_paste_text = f"{pub['author_year']}\t{topics_str}\t\t\t\t{pub['title']} ({pub['journal']})\t{pub['doi']}"
-        with st.popover("📋 Copy Row for Sheet"):
-            st.caption("Copy and paste directly into Google Sheets:")
-            st.code(row_paste_text, language="text")
-
-        st.divider()
-
-
-# --- RADAR TRIGGER LOGIC ---
-if "active_view_bundle" in st.session_state:
-    _, b_hits, b_terms = st.session_state["active_view_bundle"]
-    show_radar_dialog(b_hits, b_terms)
-
-elif enable_radar and active_radar_terms:
-    terms_key = "_".join(sorted(active_radar_terms))
-    recent_hits = check_recent_publications(active_radar_terms, max_results=5)
-
-    if recent_hits:
-        if st.sidebar.button(f"🔔 View Radar Alerts ({len(recent_hits)})"):
-            st.session_state[f"dismissed_{terms_key}"] = False
-
-        if not st.session_state.get(f"dismissed_{terms_key}", False):
-            show_radar_dialog(recent_hits, active_radar_terms)
-
-
-# --- SPREADSHEET DATABASE RESULTS (ALWAYS VISIBLE UNDERNEATH) ---
 st.write(f"Showing **{len(filtered_df)}** of **{len(df)}** studies")
 
 csv_data = filtered_df.to_csv(index=False).encode('utf-8')
